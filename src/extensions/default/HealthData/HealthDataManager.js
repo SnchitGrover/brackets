@@ -28,13 +28,10 @@ define(function (require, exports, module) {
         CommandManager      = brackets.getModule("command/CommandManager"),
         HealthLogger        = brackets.getModule("utils/HealthLogger"),
         PreferencesManager  = brackets.getModule("preferences/PreferencesManager"),
-        FileSystem          = brackets.getModule("filesystem/FileSystem"),
-        FileUtils           = brackets.getModule("file/FileUtils"),
         UrlParams           = brackets.getModule("utils/UrlParams").UrlParams,
         Strings             = brackets.getModule("strings"),
         HealthDataUtils     = require("HealthDataUtils"),
         uuid                = require("thirdparty/uuid"),
-        AdobeAnalytics      = brackets.getModule("analytics/AdobeAnalyticsLogger"),
         prefs               = PreferencesManager.getExtensionPrefs("healthData"),
         params              = new UrlParams(),
         ONE_MINUTE          = 60 * 1000,
@@ -72,64 +69,83 @@ define(function (require, exports, module) {
                         oneTimeHealthData.bracketsTheme = bracketsTheme;
                     })
                     .always(function () {
-                        var userUuid  = PreferencesManager.getViewState("UUID");
-                        var olderUuid = PreferencesManager.getViewState("OlderUUID");
+                        getSetUserID().done(function (userGuids) {
+                            oneTimeHealthData.uuid  = userGuids.userUuid;
+                            oneTimeHealthData.olderuuid = userGuids.olderUuid;
 
-                        if (userUuid && olderUuid) {
-                            oneTimeHealthData.uuid      = userUuid;
-                            oneTimeHealthData.olderuuid = olderUuid;
                             return result.resolve(oneTimeHealthData);
-                        }
-                        else {
-
-                            // So we are going to get the Machine hash in either of the cases.
-                            if (appshell.app.getMachineHash) {
-                                appshell.app.getMachineHash(function (err, macHash) {
-
-                                    var generatedUuid;
-                                    if (err) {
-                                        generatedUuid = uuid.v4();
-                                    } else {
-                                        generatedUuid = macHash;
-                                    }
-
-                                    if (!userUuid) {
-                                        // Could be a new user. In this case
-                                        // both will remain the same.
-                                        userUuid = olderUuid = generatedUuid;
-                                    } else {
-                                        // For existing user, we will still cache
-                                        // the older uuid, so that we can improve
-                                        // our reporting in terms of figuring out
-                                        // the new users accurately.
-                                        olderUuid = userUuid;
-                                        userUuid  = generatedUuid;
-                                    }
-
-                                    PreferencesManager.setViewState("UUID", userUuid);
-                                    PreferencesManager.setViewState("OlderUUID", olderUuid);
-
-                                    oneTimeHealthData.uuid      = userUuid;
-                                    oneTimeHealthData.olderuuid = olderUuid;
-                                    return result.resolve(oneTimeHealthData);
-                                });
-                            } else {
-                                // Probably running on older shell, in which case we will
-                                // assign the same uuid to olderuuid.
-                                if (!userUuid) {
-                                    oneTimeHealthData.uuid = oneTimeHealthData.olderuuid = uuid.v4();
-                                } else {
-                                    oneTimeHealthData.olderuuid = userUuid;
-                                }
-
-                                PreferencesManager.setViewState("UUID",      oneTimeHealthData.uuid);
-                                PreferencesManager.setViewState("OlderUUID", oneTimeHealthData.olderuuid);
-                                return result.resolve(oneTimeHealthData);
-                            }
-                        }
+                        });
                     });
 
             });
+        return result.promise();
+    }
+
+     /**
+     * will check uuid and older uuid exists or not
+     * set if not present
+     */
+
+    function getSetUserID() {
+
+        var result = new $.Deferred(),
+            userUuid = PreferencesManager.getViewState("UUID"),
+            olderUuid = PreferencesManager.getViewState("OlderUUID"),
+            userGuids = {};
+
+
+        if (userUuid && olderUuid) {
+            userGuids.userUuid      = userUuid;
+            userGuids.olderUuid = olderUuid;
+
+            return result.resolve(userGuids);
+        } else {
+
+            // So we are going to get the Machine hash in either of the cases.
+            if (appshell.app.getMachineHash) {
+                appshell.app.getMachineHash(function (err, macHash) {
+
+                    var generatedUuid;
+                    if (err) {
+                        generatedUuid = uuid.v4();
+                    } else {
+                        generatedUuid = macHash;
+                    }
+
+                    if (!userUuid) {
+                        // Could be a new user. In this case
+                        // both will remain the same.
+                        userUuid = olderUuid = generatedUuid;
+                    } else {
+                        // For existing user, we will still cache
+                        // the older uuid, so that we can improve
+                        // our reporting in terms of figuring out
+                        // the new users accurately.
+                        olderUuid = userUuid;
+                        userUuid  = generatedUuid;
+                    }
+
+                    PreferencesManager.setViewState("UUID", userUuid);
+                    PreferencesManager.setViewState("OlderUUID", olderUuid);
+
+                    userGuids.uuid      = userUuid;
+                    userGuids.olderuuid = olderUuid;
+                    return result.resolve(userGuids);
+                });
+            } else {
+                // Probably running on older shell, in which case we will
+                // assign the same uuid to olderuuid.
+                if (!userUuid) {
+                    userGuids.uuid = userGuids.olderuuid = uuid.v4();
+                } else {
+                    userGuids.olderuuid = userUuid;
+                }
+
+                PreferencesManager.setViewState("UUID",      userGuids.uuid);
+                PreferencesManager.setViewState("OlderUUID", userGuids.olderuuid);
+                return result.resolve(userGuids);
+            }
+        }
         return result.promise();
     }
 
@@ -138,48 +154,56 @@ define(function (require, exports, module) {
      * will return complete Analyics Data in Json Format
      */
     function getAnalyticsData(eventParams) {
-        var userUuid = PreferencesManager.getViewState("UUID"),
-            olderUuid = PreferencesManager.getViewState("OlderUUID");
 
-        //Create default Values
-        var defaultEventParams = {
-            eventCategory: "pingData",
-            eventSubCategory: "",
-            eventType: "",
-            eventSubType: ""
-        };
-        //Override with default values if not present
-        if (!eventParams) {
-            eventParams = defaultEventParams;
-        } else {
-            var e;
-            for (e in defaultEventParams) {
-                if (defaultEventParams.hasOwnProperty(e) && !eventParams[e]) {
-                    eventParams[e] = defaultEventParams[e];
+        var result = new $.Deferred();
+
+        getSetUserID().done(function (userGuids) {
+            var userUuid  = userGuids.userUuid,
+                olderUuid = userGuids.olderUuid;
+
+            //Create default Values
+            var defaultEventParams = {
+                eventCategory: "pingData",
+                eventSubCategory: "",
+                eventType: "",
+                eventSubType: ""
+            };
+            //Override with default values if not present
+            if (!eventParams) {
+                eventParams = defaultEventParams;
+            } else {
+                var e;
+                for (e in defaultEventParams) {
+                    if (defaultEventParams.hasOwnProperty(e) && !eventParams[e]) {
+                        eventParams[e] = defaultEventParams[e];
+                    }
                 }
             }
-        }
 
-        return {
-            project: brackets.config.serviceKey,
-            environment: brackets.config.environment,
-            time: new Date().toISOString(),
-            ingesttype: "dunamis",
-            data: {
-                "event.guid": uuid.v4(),
-                "event.user_guid": olderUuid || userUuid,
-                "event.dts_end": new Date().toISOString(),
-                "event.category": eventParams.eventCategory,
-                "event.subcategory": eventParams.eventSubCategory,
-                "event.type": eventParams.eventType,
-                "event.subtype": eventParams.eventSubType,
-                "event.user_agent": window.navigator.userAgent || "",
-                "event.language": brackets.app.language,
-                "source.name": brackets.metadata.version,
-                "source.platform": brackets.platform,
-                "source.version": brackets.metadata.version
-            }
-        };
+            var ingestData = {
+                project: brackets.config.serviceKey,
+                environment: brackets.config.environment,
+                time: new Date().toISOString(),
+                ingesttype: "dunamis",
+                data: {
+                    "event.guid": uuid.v4(),
+                    "event.user_guid": olderUuid || userUuid,
+                    "event.dts_end": new Date().toISOString(),
+                    "event.category": eventParams.eventCategory,
+                    "event.subcategory": eventParams.eventSubCategory,
+                    "event.type": eventParams.eventType,
+                    "event.subtype": eventParams.eventSubType,
+                    "event.user_agent": window.navigator.userAgent || "",
+                    "event.language": brackets.app.language,
+                    "source.name": brackets.metadata.version,
+                    "source.platform": brackets.platform,
+                    "source.version": brackets.metadata.version
+                }
+            };
+
+            return result.resolve(ingestData);
+        });
+        return result.promise();
     }
 
     /**
@@ -216,148 +240,27 @@ define(function (require, exports, module) {
     }
 
     // Send Analytics data to Server
-    function sendOrSaveAnalyticsData(eventParams) {
+    function sendAnalyticsDataToServer(eventParams) {
         var result = new $.Deferred();
-        var unsentEventFileLocation = FileSystem.getFileForPath(brackets.app.getApplicationSupportDirectory() + "/unsentEventFile.txt");
 
-        AdobeAnalytics.logToAdobeAnalytics(eventParams);
-        //console.log(eventParams);
-
-        if(window.navigator.onLine){
-            sendAllEvents(unsentEventFileLocation, eventParams).done(function() {
-                result.resolve();
-            });
-        }else {
-            saveEventToDisk(unsentEventFileLocation, eventParams).done(function() {
-                result.resolve();
-            }).fail(function () {
-                result.reject();
-            });
-        }
-        return result.promise();
-    }
-
-    /*
-     * Called when internet is available. Check whether the local log file has any content
-     * If it is has, add those to event array while sending to ingest as a single request
-    */
-
-    function sendAllEvents(unsentEventFileLocation, eventParams) {
-        var result = new $.Deferred();
-        var analyticsData = [];
-
-        unsentEventFileLocation.exists(function (err, exists) {
-            if (err) {
-                // logging the error but will still send the current eventParams which needs to be logged
-                console.error("Error while checking if the event log file exists or not");
-                sendAnalyticsDataToServer(unsentEventFileLocation, analyticsData, eventParams).done(function () {
+        getAnalyticsData(eventParams).done(function (ingestData) {
+            $.ajax({
+                url: brackets.config.analyticsDataServerURL,
+                type: "POST",
+                data: JSON.stringify({events: [ingestData]}),
+                headers: {
+                    "Content-Type": "application/json",
+                    "x-api-key": brackets.config.serviceKey
+                }
+            })
+                .done(function () {
                     result.resolve();
-                }).fail(function (err) {
-                    console.error("Unable to events to server");
+                })
+                .fail(function (jqXHR, status, errorThrown) {
+                    console.error("Error in sending Adobe Analytics Data. Response : " + jqXHR.responseText + ". Status : " + status + ". Error : " + errorThrown);
                     result.reject();
                 });
-            } else {
-                if(exists) {
-                    FileUtils.readAsText(unsentEventFileLocation).done(function (content) {
-                        FileUtils.writeText(unsentEventFileLocation, "", true);
-                        content.split("\n").forEach(function(event) {
-                            if(event !== "") {
-                                analyticsData.push(getAnalyticsData(JSON.parse(event)));
-                            }
-                        });
-                        sendAnalyticsDataToServer(unsentEventFileLocation, analyticsData, eventParams).done(function () {
-                            result.resolve();
-                        }).fail(function (err) {
-                            console.error("Unable to send events to server");
-                        });
-                    }).fail(function (err) {
-                        // If reading the file fails try to send currentEventParams to server
-                        sendAnalyticsDataToServer(unsentEventFileLocation, analyticsData, eventParams).done(function () {
-                            result.resolve();
-                        }).fail(function (err) {
-                            console.error("Unable to send events to server");
-                        });
-                    });
-                }else {
-                    sendAnalyticsDataToServer(unsentEventFileLocation, analyticsData, eventParams).done(function () {
-                        result.resolve();
-                    }).fail(function (err) {
-                        console.error("Unable to send events to server");
-                    });
-                }
-            }
         });
-        return result.promise();
-    }
-
-    function sendAnalyticsDataToServer (unsentEventFileLocation, analyticsData, eventParams) {
-        var result = new $.Deferred();
-
-        analyticsData.push(getAnalyticsData(eventParams));
-        $.ajax({
-            url: brackets.config.analyticsDataServerURL,
-            type: "POST",
-            data: JSON.stringify({events: analyticsData}),
-            headers: {
-                "Content-Type": "application/json",
-                "x-api-key": brackets.config.serviceKey
-            }
-        })
-            .done(function () {
-                result.resolve();
-            }).fail(function (jqXHR, status, errorThrown) {
-                // incase request to send data to server fails write the events back to disk
-                analyticsData.forEach(function(event) {
-                    saveEventToDisk(unsentEventFileLocation, eventParams).done(function() {
-                        result.resolve();
-                    });
-                });
-                console.error("Error in sending Adobe Analytics Data. Response : " + jqXHR.responseText + ". Status : " + status + ". Error : " + errorThrown);
-                result.reject();
-            });
-        return result.promise();
-    }
-
-    /*
-     * Called when internet is unavailable, check whether the local log file is exists or not.
-     * If unavailable create the file and add the events which failed because of unavailbility of internet
-     * If the file is available, append the new events to the file
-    */
-    function saveEventToDisk(unsentEventFileLocation, eventParams) {
-        var result = new $.Deferred();
-
-        unsentEventFileLocation.exists(function (err, fileExists) {
-            if (err) {
-                console.error("Unable to check whether event log file exists");
-                result.reject();
-            } else {
-                if (fileExists) {
-                    FileUtils.readAsText(unsentEventFileLocation).done(function (content) {
-                        var dataToLoad = content + "\n" + JSON.stringify(eventParams);
-                        FileUtils.writeText(unsentEventFileLocation, dataToLoad, true).done(function () {
-                            result.resolve(true);
-                        }).fail(function (err) {
-                            console.error("Unable to write data to event log file");
-                            result.reject();
-                        });
-                    })
-                    .fail(function (err) {
-                        console.error("Unable to read data from event log file");
-                        result.reject();
-                    });
-                }else {
-                    var dataToLoad = JSON.stringify(eventParams);
-                    FileUtils.writeText(unsentEventFileLocation, dataToLoad, true).done(function () {
-                        result.resolve(true);
-                    })
-                    .fail(function (err) {
-                        console.error("Unable to write data to event log file");
-                        result.reject();
-                    });
-                }
-            }
-        });
-
         return result.promise();
     }
 
@@ -392,7 +295,7 @@ define(function (require, exports, module) {
                 // Bump up nextHealthDataSendTime at the begining of chaining to avoid any chance of sending data again before 24 hours, // e.g. if the server request fails or the code below crashes
                 PreferencesManager.setViewState("nextHealthDataSendTime", currentTime + ONE_DAY);
                 sendHealthDataToServer().always(function() {
-                    AdobeAnalytics.logToAdobeAnalytics()
+                    sendAnalyticsDataToServer()
                     .done(function () {
                         // We have already sent the health data, so can clear all health data
                         // Logged till now
@@ -443,7 +346,7 @@ define(function (require, exports, module) {
             isEventDataAlreadySent = PreferencesManager.getViewState(Eventparams.eventName);
             PreferencesManager.setViewState(Eventparams.eventName, 1, options);
             if (!isEventDataAlreadySent || forceSend) {
-                sendOrSaveAnalyticsData(Eventparams)
+                sendAnalyticsDataToServer(Eventparams)
                     .done(function () {
                         PreferencesManager.setViewState(Eventparams.eventName, 1, options);
                         result.resolve();
