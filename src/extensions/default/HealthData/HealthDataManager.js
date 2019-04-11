@@ -428,27 +428,32 @@ define(function (require, exports, module) {
      * @param{Object} Eventparams Object Containg Data to be sent to Server
      * @param{boolean} forceSend Flag for sending analytics data for testing purpose
      **/
+    /**
+     * Check if the Analytic Data is to be sent to the server.
+     * If the user has enabled tracking, Analytic Data will be sent once per session
+     * Send Analytic Data to the server if the Data associated with the given Event is not yet sent in this session.
+     * We are sending the data as soon as the user triggers the event.
+     * The data will be sent to the server only after the notification dialog
+     * for opt-out/in is closed.
+     * @param{Object} event event object
+     * @param{Object} Eventparams Object Containg Data to be sent to Server
+     * @param{boolean} forceSend Flag for sending analytics data for testing purpose
+     **/
     function checkAnalyticsDataSend(event, Eventparams, forceSend) {
         var result         = new $.Deferred(),
             isHDTracking   = prefs.get("healthDataTracking"),
             isEventDataAlreadySent;
 
-        var options = {
-            location: {
-                scope: "default"
-            }
-        };
-
         if (isHDTracking) {
-            isEventDataAlreadySent = PreferencesManager.getViewState(Eventparams.eventName);
-            PreferencesManager.setViewState(Eventparams.eventName, 1, options);
+            isEventDataAlreadySent = HealthLogger.analyticsEventMap.get(Eventparams.eventName);
+            HealthLogger.analyticsEventMap.set(Eventparams.eventName, true);
             if (!isEventDataAlreadySent || forceSend) {
-                sendOrSaveAnalyticsData(Eventparams)
+                sendAnalyticsDataToServer(Eventparams)
                     .done(function () {
-                        PreferencesManager.setViewState(Eventparams.eventName, 1, options);
+                        HealthLogger.analyticsEventMap.set(Eventparams.eventName, true);
                         result.resolve();
                     }).fail(function () {
-                        PreferencesManager.setViewState(Eventparams.eventName, 0, options);
+                        HealthLogger.analyticsEventMap.set(Eventparams.eventName, false);
                         result.reject();
                     });
             } else {
@@ -460,6 +465,17 @@ define(function (require, exports, module) {
 
         return result.promise();
     }
+
+    /**
+     * This function is auto called after 24 hours to empty the map
+     * Map is used to make sure that we send an event only once per 24 hours
+     **/
+
+    function emptyAnalyticsMap() {
+        HealthLogger.analyticsEventMap.clear();
+        setTimeout(emptyAnalyticsMap, ONE_DAY);
+    }
+    setTimeout(emptyAnalyticsMap, ONE_DAY);
 
     // Expose a command to test data sending capability, but limit it to dev environment only
     CommandManager.register("Sends health data and Analytics data for testing purpose", "sendHealthData", function() {

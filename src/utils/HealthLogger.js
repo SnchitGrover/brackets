@@ -40,7 +40,8 @@ define(function (require, exports, module) {
 
 
         HEALTH_DATA_STATE_KEY       = "HealthData.Logs",
-        logHealthData               = true;
+        logHealthData               = true,
+        analyticsEventMap           = new Map();
 
     var commonStrings = { USAGE: "usage",
         FILE_OPEN: "fileOpen",
@@ -323,11 +324,11 @@ define(function (require, exports, module) {
      * needs to be logged- should be a js var compatible string
      */
     function sendAnalyticsData(eventName, eventCategory, eventSubCategory, eventType, eventSubType) {
-        var result                  = new $.Deferred(),
-            isHDTracking            = PreferencesManager.getExtensionPrefs("healthData").get("healthDataTracking"),
-            eventParams             = {};
+        var isEventDataAlreadySent = analyticsEventMap.get(eventName),
+            isHDTracking   = PreferencesManager.getExtensionPrefs("healthData").get("healthDataTracking"),
+            eventParams = {};
 
-        if (isHDTracking && eventName && eventCategory) {
+        if (isHDTracking && !isEventDataAlreadySent && eventName && eventCategory) {
             eventParams =  {
                 eventName: eventName,
                 eventCategory: eventCategory,
@@ -335,11 +336,10 @@ define(function (require, exports, module) {
                 eventType: eventType || "",
                 eventSubType: eventSubType || ""
             };
-
-            AdobeAnalytics.logToAdobeAnalytics(eventParams);
-            result.resolve();
+            notifyHealthManagerToSendData(eventParams);
         }
     }
+
 
     // Define public API
     exports.getHealthDataLog          = getHealthDataLog;
@@ -370,4 +370,6 @@ define(function (require, exports, module) {
     // A new search context on search bar up-Gives an idea of number of times user did a discrete search
     exports.SEARCH_NEW                = "searchNew";
     exports.commonStrings = commonStrings;
+    exports.analyticsEventMap = analyticsEventMap;
+
 });
